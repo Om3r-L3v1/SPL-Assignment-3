@@ -1,21 +1,12 @@
 #!/usr/bin/env python3
-"""
-Basic Python Server for STOMP Assignment – Stage 3.3
-
-IMPORTANT:
-DO NOT CHANGE the server name or the basic protocol.
-Students should EXTEND this server by implementing
-the methods below.
-"""
-
 import socket
 import sys
 import threading
+import sqlite3
+import os
 
-
-SERVER_NAME = "STOMP_PYTHON_SQL_SERVER"  # DO NOT CHANGE!
-DB_FILE = "stomp_server.db"              # DO NOT CHANGE!
-
+SERVER_NAME = "STOMP_PYTHON_SQL_SERVER"
+DB_FILE = "stomp_server.db"
 
 def recv_null_terminated(sock: socket.socket) -> str:
     data = b""
@@ -28,32 +19,76 @@ def recv_null_terminated(sock: socket.socket) -> str:
             msg, _ = data.split(b"\0", 1)
             return msg.decode("utf-8", errors="replace")
 
-
 def init_database():
-    pass
+    """Initializes the database schema matching Database.java expectations."""
+    with sqlite3.connect(DB_FILE) as conn:
+        c = conn.cursor()
+        
+        # Table: users
+        c.execute('''CREATE TABLE IF NOT EXISTS users (
+                        username TEXT PRIMARY KEY,
+                        password TEXT NOT NULL,
+                        registration_date DATETIME
+                     )''')
+        
+        # Table: login_history
+        c.execute('''CREATE TABLE IF NOT EXISTS login_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        username TEXT NOT NULL,
+                        login_time DATETIME,
+                        logout_time DATETIME,
+                        FOREIGN KEY(username) REFERENCES users(username)
+                     )''')
+        
+        # Table: file_tracking
+        c.execute('''CREATE TABLE IF NOT EXISTS file_tracking (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        username TEXT NOT NULL,
+                        filename TEXT NOT NULL,
+                        upload_time DATETIME,
+                        game_channel TEXT,
+                        FOREIGN KEY(username) REFERENCES users(username)
+                     )''')
+        
+        conn.commit()
+    print(f"[{SERVER_NAME}] Database initialized at {DB_FILE}")
 
-
-def execute_sql_command(sql_command: str) -> str:
-    return "done"
-
-
-def execute_sql_query(sql_query: str) -> str:
-    return "done"
-
+def process_sql(sql_command: str) -> str:
+    """
+    Executes SQL and formats response for Database.java:
+    - SELECT: Returns "SUCCESS|row1|row2|..." where row is str(tuple)
+    - INSERT/UPDATE: Returns "SUCCESS"
+    """
+    sql_stripped = sql_command.strip().upper()
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            c = conn.cursor()
+            c.execute(sql_command)
+            
+            if sql_stripped.startswith("SELECT"):
+                rows = c.fetchall()
+                response_data = "|".join([str(row) for row in rows])
+                return f"SUCCESS|{response_data}"
+            else:
+                conn.commit()
+                return "SUCCESS"
+                
+    except Exception as e:
+        print(f"SQL Error: {e}")
+        return f"ERROR:{str(e)}"
 
 def handle_client(client_socket: socket.socket, addr):
     print(f"[{SERVER_NAME}] Client connected from {addr}")
-
     try:
         while True:
             message = recv_null_terminated(client_socket)
             if message == "":
                 break
 
-            print(f"[{SERVER_NAME}] Received:")
-            print(message)
-
-            client_socket.sendall(b"done\0")
+            response = process_sql(message)
+            
+            response_bytes = (response + "\0").encode("utf-8")
+            client_socket.sendall(response_bytes)
 
     except Exception as e:
         print(f"[{SERVER_NAME}] Error handling client {addr}: {e}")
@@ -62,10 +97,10 @@ def handle_client(client_socket: socket.socket, addr):
             client_socket.close()
         except Exception:
             pass
-        print(f"[{SERVER_NAME}] Client {addr} disconnected")
-
 
 def start_server(host="127.0.0.1", port=7778):
+    init_database()
+    
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
@@ -73,8 +108,7 @@ def start_server(host="127.0.0.1", port=7778):
         server_socket.bind((host, port))
         server_socket.listen(5)
         print(f"[{SERVER_NAME}] Server started on {host}:{port}")
-        print(f"[{SERVER_NAME}] Waiting for connections...")
-
+        
         while True:
             client_socket, addr = server_socket.accept()
             t = threading.Thread(
@@ -92,14 +126,5 @@ def start_server(host="127.0.0.1", port=7778):
         except Exception:
             pass
 
-
 if __name__ == "__main__":
-    port = 7778
-    if len(sys.argv) > 1:
-        raw_port = sys.argv[1].strip()
-        try:
-            port = int(raw_port)
-        except ValueError:
-            print(f"Invalid port '{raw_port}', falling back to default {port}")
-
-    start_server(port=port)
+    start_server(port=7778)

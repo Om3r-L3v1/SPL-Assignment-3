@@ -2,17 +2,20 @@ package bgu.spl.net.srv;
 
 import bgu.spl.net.api.MessageEncoderDecoder;
 import bgu.spl.net.api.MessagingProtocol;
+import bgu.spl.net.api.StompMessagingProtocol;
+import bgu.spl.net.impl.stomp.ConnectionImpl;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.function.Supplier;
-
 public abstract class BaseServer<T> implements Server<T> {
 
     private final int port;
     private final Supplier<MessagingProtocol<T>> protocolFactory;
     private final Supplier<MessageEncoderDecoder<T>> encdecFactory;
     private ServerSocket sock;
+    private final ConnectionImpl<T> connections;
+    private int idCounter = 0;
 
     public BaseServer(
             int port,
@@ -23,6 +26,7 @@ public abstract class BaseServer<T> implements Server<T> {
         this.protocolFactory = protocolFactory;
         this.encdecFactory = encdecFactory;
 		this.sock = null;
+        this.connections = new ConnectionImpl<>();
     }
 
     @Override
@@ -36,12 +40,16 @@ public abstract class BaseServer<T> implements Server<T> {
             while (!Thread.currentThread().isInterrupted()) {
 
                 Socket clientSock = serverSock.accept();
-
+                int connectionId = idCounter++;
+                MessagingProtocol<T> protocol = protocolFactory.get();
+                if (protocol instanceof StompMessagingProtocol) {
+                    ((StompMessagingProtocol<T>) protocol).start(connectionId, connections);
+                }
                 BlockingConnectionHandler<T> handler = new BlockingConnectionHandler<>(
                         clientSock,
                         encdecFactory.get(),
-                        protocolFactory.get());
-
+                        protocol);
+                connections.addConnection(connectionId, (ConnectionHandler<String>)handler);
                 execute(handler);
             }
         } catch (IOException ex) {

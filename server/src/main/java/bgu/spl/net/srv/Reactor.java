@@ -11,6 +11,9 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Supplier;
+import bgu.spl.net.impl.stomp.ConnectionImpl;
+import bgu.spl.net.api.StompMessagingProtocol;
+
 
 public class Reactor<T> implements Server<T> {
 
@@ -19,6 +22,8 @@ public class Reactor<T> implements Server<T> {
     private final Supplier<MessageEncoderDecoder<T>> readerFactory;
     private final ActorThreadPool pool;
     private Selector selector;
+    private final ConnectionImpl<T> connections;
+    private int idCounter = 0;
 
     private Thread selectorThread;
     private final ConcurrentLinkedQueue<Runnable> selectorTasks = new ConcurrentLinkedQueue<>();
@@ -33,6 +38,7 @@ public class Reactor<T> implements Server<T> {
         this.port = port;
         this.protocolFactory = protocolFactory;
         this.readerFactory = readerFactory;
+        this.connections = new ConnectionImpl<>();
     }
 
     @Override
@@ -64,7 +70,7 @@ public class Reactor<T> implements Server<T> {
                     }
                 }
 
-                selector.selectedKeys().clear(); //clear the selected keys set so that we can know about new events
+                selector.selectedKeys().clear();
 
             }
 
@@ -95,11 +101,21 @@ public class Reactor<T> implements Server<T> {
     private void handleAccept(ServerSocketChannel serverChan, Selector selector) throws IOException {
         SocketChannel clientChan = serverChan.accept();
         clientChan.configureBlocking(false);
+
+        int connectionId = idCounter++;
+        MessagingProtocol<T> protocol = protocolFactory.get();
+        if (protocol instanceof StompMessagingProtocol) {
+            ((StompMessagingProtocol<T>) protocol).start(connectionId, connections);
+        }
+
+
         final NonBlockingConnectionHandler<T> handler = new NonBlockingConnectionHandler<>(
                 readerFactory.get(),
-                protocolFactory.get(),
+                protocol,
                 clientChan,
                 this);
+        connections.addConnection(connectionId, (ConnectionHandler<String>)handler);
+        
         clientChan.register(selector, SelectionKey.OP_READ, handler);
     }
 
